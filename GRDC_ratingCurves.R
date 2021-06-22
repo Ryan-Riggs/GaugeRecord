@@ -183,6 +183,13 @@ grdc_files = paste0(grdc_path, grdc_files)
 
 
 
+random = function(x){
+  x = na.omit(x)
+  v = runif(1000, x-90, x+90)
+  return(v)
+}
+
+
 start = as.Date("1979-01-01")
 data_val = Eff_widths
 RC_End = as.Date("2014-12-31") ###WAs 2014
@@ -211,7 +218,7 @@ as.data.frame(gage_stats_GRADES)
 l_vals = as.data.frame(matrix(numeric(), nrow =nrow(Site_number_xsections), ncol = 20))
 Mean_grades = as.vector(nrow(Site_number_xsections))
 u_vals = as.data.frame(matrix(numeric(), nrow =nrow(Site_number_xsections), ncol = 20))
-sd_vals = as.data.frame(matrix(numeric(), nrow =nrow(Site_number_xsections), ncol = 20))
+sd_vals = as.data.frame(matrix(numeric(), nrow =length(Site_number_xsections), ncol = 20))
 sd_vals_1 = as.data.frame(matrix(numeric(), nrow =nrow(Site_number_xsections), ncol = 20))
 width_vals = as.data.frame(matrix(numeric(), nrow =nrow(Site_number_xsections), ncol = 20))
 gage_quants_q = as.data.frame(matrix(numeric(), nrow =nrow(Site_number_xsections), ncol = 100))
@@ -230,7 +237,7 @@ percentiles = c(0.05, 0.95)
 training = 0.7
 data_val = as.data.table(data_val)
 setkey(data_val, ID)
-
+cols = c("green", "blue", "red")
 
 library(profvis)
 library(caret)
@@ -239,16 +246,18 @@ library(dataRetrieval)
 for(i in 1:length(Site_number_xsections)){
   id = Site_number_xsections[i]
   paired_df = data_val[.(Site_number_xsections[i])]
+  pd = paired_df
   usgs_q = try(read.table(grdc_files[i], stringsAsFactors = FALSE))
   if(!is.error(usgs_q)){
     usgs_q$V1 = substr(usgs_q$V1, 0, 10)
     usgs_q$datetime = usgs_q$V1
     usgs_q$q = as.numeric(usgs_q$V2)
     usgs_q$Date = as.Date(usgs_q$datetime, format = "%Y-%m-%d")
-    usgs_q = usgs_q[usgs_q$q>=0,]
+    usgs_q = usgs_q[usgs_q$q>=0&usgs_q$Date>as.Date("1983-12-31", format ="%Y-%m-%d"),]
+   
+    
     paired_df = inner_join(paired_df, usgs_q)
     paired_df$Q = paired_df$q
-    
     paired_df = inner_join(paired_df, usgs_q)
     #paired_df = distinct(paired_df, Date, .keep_all = TRUE)
     #########################################################################################################    
@@ -270,11 +279,6 @@ for(i in 1:length(Site_number_xsections)){
     # TrainingSet = paired_df$Year%in%t
     # Train = paired_df[TrainingSet,]
     # Valid = paired_df[!TrainingSet,]
-    
-    
-    
-    
-    
     # Train = paired_df[paired_df$Date>=as.Date(as.character('2015-01-01', format = "%Y-%m-%d")),]
     # Valid = paired_df[paired_df$Date<as.Date(as.character('2015-01-01', format = "%Y-%m-%d")),]
     
@@ -287,13 +291,16 @@ for(i in 1:length(Site_number_xsections)){
       spl = approxfun(x, y) #, method = "hyman")) #####either usse 'approxfun' or use splinefun with method = "hyman"
     } else{next}
     
-    
-    # par(pty = "s")
-    # plot(c(min(spl(x), na.rm = TRUE), max(spl(x), na.rm = TRUE)),c(min(spl(x), na.rm = TRUE), max(spl(x), na.rm = TRUE)), type = "n", xlab = "In situ Discharge (cms)", ylab = "Landsat Discharge (cms)", main = "In situ vs Landsat")
-    # points(Valid$Q, spl(Valid$calc_mean), col = "blue")
-    # abline(0,1)
-    
-    plot(paired_df$Date, paired_df$q, type = "l")
+    par(mfrow = c(2,1))
+    mn = as.Date("1984-01-01")
+    mx = as.Date("2021-12-31")
+    all = seq.Date(mn, mx, 1)
+    all = as.data.frame(all)
+    colnames(all) = "Date"
+    all = full_join(usgs_q, all)
+    plot(all$Date[order(all$Date)], all$q[order(all$Date)], type = "l", ylab = "Discharge (cms)", xlab = "Year")
+    points(Train$Date, Train$Q, col = "purple", pch = 19)
+    #plot(paired_df$Date, paired_df$q, type = "l")
     points(Valid$Date, spl(Valid$calc_mean), col = "green")
     
     names = c("rrmse", "nse", "kge", "nrmse", "rbias")
@@ -313,7 +320,6 @@ for(i in 1:length(Site_number_xsections)){
     rfVal = as.data.frame(t(rfVal))
     colnames(rfVal) = names
     
-    #points(Valid$Q, Valid$rf, pch = 19)
     points(Valid$Date, Valid$rf, col = "blue")
     
     plsFit = try(train(Q ~calc_mean+Date, 
@@ -327,7 +333,6 @@ for(i in 1:length(Site_number_xsections)){
     dlVal = as.data.frame(t(dlVal))
     colnames(dlVal) = names
     
-    #points(Valid$Q, preds, col = "red")
     points(Valid$Date, preds, col = "red")
     best = c(qVal$nse, rfVal$nse, dlVal$nse)
     max(best, na.rm = TRUE)
@@ -346,12 +351,21 @@ for(i in 1:length(Site_number_xsections)){
     rbias = out$rbias
     
     bestFit = c("QNT", "RF", "KNN")
+    legend1 = c(bestFit[input], paste0("NSE=",signif(nse, 3)),
+                paste0("KGE=",signif(kge, 3)),paste0("rBias=",signif(rbias, 3)),paste0("NRMSE=",signif(nrmse, 3)),paste0("RRMSE=",signif(rrmse, 3)))
+    legend("top", legend1, xpd = TRUE, bty = "n",  inset = c(.1, -.1), horiz = TRUE)
     
-    legend1 = c(bestFit[input], paste0("RRMSE=",signif(rrmse, 3)),paste0("NSE=",signif(nse, 3)),
-                paste0("rBias=",signif(rbias, 3)), paste0("KGE=",signif(kge, 3)), paste0("NRMSE=",signif(nrmse, 3)))
-    legend("topleft", legend1, xpd = TRUE, bty = "n", adj = 1, inset = c(-.05, -.1))
+    Valid$dl = preds
+    comb = cbind(Valid$model, Valid$rf, preds)
+    comb = as.data.frame(comb)
+    sdVals = apply(comb, 1, sd, na.rm = TRUE)
     
-    
+    comb$true = Valid$Q
+    comb$sd = sdVals
+
+    error = comb[input] - comb$true
+    gage_stats$RMSE[i] = sqrt(mean((error$V1^2), na.rm = TRUE))
+    gage_stats$Bias[i] = mean(error$V1, na.rm = TRUE)
     gage_stats$RRMSE[i] = rrmse
     gage_stats$NSE[i] = nse
     gage_stats$KGE[i] = kge
@@ -361,14 +375,125 @@ for(i in 1:length(Site_number_xsections)){
     gage_stats$n_Landsat_obs[i] = nrow(paired_df)
     print(i)
     
+    
+    plot(all$Date[order(all$Date)], all$q[order(all$Date)], type = "l", ylab = "Discharge (cms", xlab = "Year")
+    pd = left_join(pd, all[is.na(all$q),])
+    comb = cbind(spl(pd$calc_mean),predict(rf, pd), predict(plsFit, pd))
+    comb = as.data.frame(comb)
+    random_df = sapply(pd$calc_mean,random)
+
+    sdVals = as.vector(nrow(pd))
+    for(j in 1:ncol(random_df)){
+      dts = pd$Date[j]
+      widths = random_df[,j]
+      df = cbind(dts, unlist(widths))
+      df = as.data.frame(df)
+      colnames(df) = c("Date", "calc_mean")
+      df$Date = as.Date(df$Date)
+      df1 = cbind(spl(df$calc_mean),predict(rf, df), predict(plsFit, df))
+      df1 = df1[,input]
+      min = min(df1, na.rm = TRUE)
+      max = max(df1, na.rm = TRUE)
+      sdVals[j] = max-min
+    }
+    
+    sd_vals[i, 1:length(sdVals)] = sdVals
+    arrows(pd$Date, comb[,input] - sdVals, pd$Date, comb[,input]+sdVals,col = "indianred",
+           code=3, angle = 180, length = 0, lwd = 0.5)
+    points(pd$Date, comb[,input], col = cols[input])
+    legend2 = c("Training", "Quantile", "Random Forest", "KNN")
+    legend("top", legend2,pch = c(19, 01,01,01), col = c("purple", cols), xpd = TRUE, bty = "n",  inset = c(.1, -.1), horiz = TRUE)
+    
   } else{next}
+}
+
+biasE = apply(sd_vals, 1, mean, na.rm = TRUE)
+rm = function(x){
+  rmse = sqrt(mean(na.omit(x)^2))
+  return(rmse)
+}
+rmseE = apply(sd_vals, 1, rm)
+plot(abs(gage_stats$Bias), abs(biasE), xlim = c(1, 1000), ylim = c(1,1000), log = "xy")
+
+plot(gage_stats$RMSE, rmseE, xlim = c(1, 10000), ylim = c(1,10000), log = "xy")
+
+
+
+
+
+##interpolation ranges. 
+gaps = as.data.frame(matrix(numeric(), nrow =length(Site_number_xsections), ncol = 20))
+gap_dates = as.data.frame(matrix(numeric(), nrow =length(Site_number_xsections), ncol = 20))
+for(i in 1:length(Site_number_xsections)){
+  usgs_q = try(read.table(grdc_files[i], stringsAsFactors = FALSE))
+  if(!is.error(usgs_q)){
+    usgs_q$V1 = substr(usgs_q$V1, 0, 10)
+    usgs_q$datetime = usgs_q$V1
+    usgs_q$q = as.numeric(usgs_q$V2)
+    usgs_q$Date = as.Date(usgs_q$datetime, format = "%Y-%m-%d")
+    usgs_q = usgs_q[usgs_q$q>=0&usgs_q$Date>as.Date("1983-12-31", format ="%Y-%m-%d"),]
+    usgs_q$gap <- c(NA, with(usgs_q, usgs_q$Date[-1] -usgs_q$Date[-nrow(usgs_q)]))
+    gp = usgs_q[usgs_q$gap>1,]
+    gaps[i,1:nrow(gp)] = gp$gap
+    gap_dates[i,1:nrow(gp)] = gp$Date
+    
+    print(i)
+    }
+}
+
+
+
+mean(unlist(gaps), na.rm = TRUE)
+median(unlist(gaps), na.rm = TRUE)
+
+gaps_sites = apply(gaps, 1, mean, na.rm = TRUE)
+plot(unlist(gap_dates), unlist(gaps), type = "l")
+
+library(RColorBrewer)
+n = nrow(gaps)
+pal = rainbow(n)
+
+plot(as.Date(unlist(gap_dates[12,])),gaps[12,])
+
+st = as.Date("1984-01-01")
+en = as.Date("2021-01-01")
+plot(0,0, xlim = c(st,en), ylim = c(0,2000))
+for(i in 1:nrow(gaps)){
+lines(as.Date(unlist(gap_dates[i,])),unlist(gaps[i,]), col=pal[i])
 }
 
 
 
 
+a = seq(1,10, 1)
+
+a[5] = NA
+
+plot(a, type = "l")
+
+Date= seq.Date(mn, mx, 1)
+discharge = as.data.frame(matrix(numeric(), nrow =length(Site_number_xsections), ncol = length(Date)))
+all = as.data.frame(Date)
+for(i in 1:length(Site_number_xsections)){
+usgs_q = try(read.table(grdc_files[i], stringsAsFactors = FALSE))
+if(!is.error(usgs_q)){
+  usgs_q$V1 = substr(usgs_q$V1, 0, 10)
+  usgs_q$datetime = usgs_q$V1
+  usgs_q$q = as.numeric(usgs_q$V2)
+  usgs_q$Date = as.Date(usgs_q$datetime, format = "%Y-%m-%d")
+  usgs_q = usgs_q[usgs_q$q>=0&usgs_q$Date>as.Date("1983-12-31", format ="%Y-%m-%d"),]
+  usgs_q = full_join(all, usgs_q)
+  discharge[i,] = usgs_q$q
+}
+}
+colnames(discharge) = Date
+discharge$Sttn_Nm = Site_number_xsections
+
+t = melt(discharge, id.vars = "Sttn_Nm")
 
 
+
+fwrite(t, "E:\\research\\RatingCurveAnalysis\\GaugeLocations\\DischargeDatasets\\grdc_gee1.csv")
 
 
 ################################################################################################################################
