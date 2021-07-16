@@ -169,6 +169,288 @@ tm_shape(grdc)+
 
 
 ##Knn and/or RF works the best it seems. 
+########################################################################################################################
+##GRDC cross sections. 
+########################################################################################################################
+grdc_path = "E:\\research\\RatingCurveAnalysis\\GaugeLocations\\DischargeDatasets\\GRDC\\"
+gages = list.files("E:/research/RatingCurveAnalysis/obs/SWORD/Xsections_2km/GRDC_xsection_widths/")
+gages = gsub("Gauge__", "", gages)
+Site_number_xsections = gsub("_grdc.csv", "", gages)
+grdc_files = paste0(Site_number_xsections, "_Q_Day.Cmd.txt")
+grdc_files = paste0(grdc_path, grdc_files)
+xsection_files = paste0("E:/research/RatingCurveAnalysis/obs/SWORD/Xsections_2km/GRDC_xsection_widths/", "Gauge__", Site_number_xsections, "_grdc.csv")
+
+
+
+random = function(x){
+  x = na.omit(x)
+  v = runif(1000, x-90, x+90)
+  return(v)
+}
+
+
+start = as.Date("1979-01-01")
+data_val = Eff_widths
+RC_End = as.Date("2014-12-31") ###WAs 2014
+RC_year = format(RC_End, "%Y")
+RC_year_1 = format(RC_End+1, "%Y")
+data_val$ID = data_val$ID
+data_val$ID_2 = data_val$ID
+data_val$calc_mean = data_val$Effective_width
+
+#data_val$Date = as.character(data_val$Date)
+tab$ID = tab$id
+tab$ID_2 = tab$id
+tab$width_m = data_val$width_m[match(tab$ID, data_val$ID)]
+#tab$change= tab$median
+#tab$change[mapply(is.na, tab$change)] <- 0
+tab$width_m = data$width_m[match(tab$ID_2, data$ID_2)]
+xSecq=as.data.frame(matrix(numeric(), nrow =5, ncol = 11))
+xSecw=as.data.frame(matrix(numeric(), nrow =5, ncol = 11))
+xSecIDcol=grep("V", names(Site_number_xsections))
+mInd = array(5, dimnames = NULL)
+rangedf_1 = as.data.frame(matrix(numeric(), nrow = 1, ncol = 4))
+gage_stats = as.data.frame(matrix(numeric(), nrow =length(Site_number_xsections), ncol = 23))
+gage_stats_GRADES = as.data.frame(matrix(numeric(), nrow =nrow(Site_number_xsections), ncol = 14))
+colnames(gage_stats_GRADES)= c("Site_number", "GRWL_width_m","n_Landsat_obs","R_2", "R", "RMSE", "p_val","Bias", "RRMSE", "avg_std", "change", 'RRMSE_median', "std_Q", "STDE", "mode")
+as.data.frame(gage_stats_GRADES)
+l_vals = as.data.frame(matrix(numeric(), nrow =nrow(Site_number_xsections), ncol = 20))
+Mean_grades = as.vector(nrow(Site_number_xsections))
+u_vals = as.data.frame(matrix(numeric(), nrow =nrow(Site_number_xsections), ncol = 20))
+sd_vals = as.data.frame(matrix(numeric(), nrow =length(Site_number_xsections), ncol = 20))
+sd_vals_1 = as.data.frame(matrix(numeric(), nrow =nrow(Site_number_xsections), ncol = 20))
+width_vals = as.data.frame(matrix(numeric(), nrow =nrow(Site_number_xsections), ncol = 20))
+gage_quants_q = as.data.frame(matrix(numeric(), nrow =nrow(Site_number_xsections), ncol = 100))
+gage_quants_w = as.data.frame(matrix(numeric(), nrow =nrow(Site_number_xsections), ncol = 100))
+colnames(gage_stats)= c("Site_number", "GRWL_width_m","n_Landsat_obs","R_2", "R", "RMSE", "mode","Bias", "RRMSE","avg_std", "change", "RRMSE_median", "std_Q","STDE", "KGE", "NSE", "rBias",
+                        "SDRR", "MRR", "NRMSE", "Q_50", "W_50")
+as.data.frame(gage_stats)
+gage_stats_col1 = as.vector(1)
+gage_stats_col2 = as.vector(1)
+gage_stats_GRADES_col1 = as.vector(1)
+gage_stats_GRADES_col2 = as.vector(1)
+paired_df_vals = as.data.frame(matrix(numeric(), nrow =nrow(Site_number_xsections), ncol = 20))
+rmse = 1
+width_grouping = 30
+percentiles = c(0.05, 0.95)
+training = 0.7
+data_val = as.data.table(data_val)
+setkey(data_val, ID)
+
+library(profvis)
+library(caret)
+library(dataRetrieval)
+
+pdfOut = "E:/research/temp_plots/GRDC_RC_xsections_hydrographs.pdf"
+pdf(pdfOut)
+
+
+
+gage_stats = as.data.frame(matrix(numeric(), nrow =50000, ncol = 23))
+colnames(gage_stats)= c("Site_number", "GRWL_width_m","n_Landsat_obs","R_2", "R", "RMSE", "mode","Bias", "RRMSE","avg_std", "change", "std_Q","STDE", "KGE", "NSE", "rBias",
+                        "SDRR", "MRR", "NRMSE", "Q_50", "W_50", "node_id")
+cols = c("green","yellow", "blue", "red")
+
+
+#profvis({
+for(i in 1:length(Site_number_xsections)){
+  paired_df = fread(xsection_files[i])
+  paired_df = paired_df[paired_df$width>0&paired_df$cloud<.1&paired_df$count==2&paired_df$max==0,]
+  paired_df$Date = as.Date(as.POSIXct(paired_df$`system:time_start`/1000, origin = "1970-01-01"))
+  paired_df$width = paired_df$width*paired_df$length
+  nodes = unique(paired_df$node_id)
+  paired_df = as.data.table(paired_df)
+  setkey(paired_df, node_id)
+  pd1 = paired_df
+  usgs_q = try(read.table(grdc_files[i], stringsAsFactors = FALSE))
+  if(!is.error(usgs_q)){
+    usgs_q$V1 = substr(usgs_q$V1, 0, 10)
+    usgs_q$datetime = usgs_q$V1
+    usgs_q$q = as.numeric(usgs_q$V2)
+    usgs_q$Date = as.Date(usgs_q$datetime, format = "%Y-%m-%d")
+    all = usgs_q
+    usgs_q = usgs_q[usgs_q$q>0&usgs_q$Date>as.Date("1983-12-31", format ="%Y-%m-%d"),]
+    paired_df = inner_join(paired_df, usgs_q)
+    paired_df$Q = paired_df$q
+    paired_df = paired_df[!is.na(paired_df$Q),]
+    #########################################################################################################    
+    nodes = unique(paired_df$node_id)
+    
+    if(length(nodes)==0){next}
+    for(p in 1:length(nodes)){
+    gage_stats$Site_number[i+(p-1)] = Site_number_xsections[i]
+    gage_stats$node_id[i+(p-1)] = nodes[p]
+    
+    paired_df_1 = paired_df[.(nodes[p])]
+    pd = pd1[.(nodes[p])]
+    if(nrow(paired_df_1)<3){next}
+    set.seed(1)
+    trainIndex = createDataPartition(paired_df_1$Q, p = training,
+                                     list = FALSE)
+    
+    Train = paired_df_1[ trainIndex,]
+    Valid = paired_df_1[-trainIndex,]
+    
+    
+    if(nrow(Valid)<3|nrow(Train)<3){next}
+    
+    linear = lm(Train$Q~Train$width)
+    ln = (Valid$width*linear$coefficients[[2]])+linear$coefficients[[1]]
+    
+    par(mfrow = c(2,1))
+    mn = as.Date("1984-01-01")
+    mx = as.Date("2021-12-31")
+    all = seq.Date(mn, mx, 1)
+    all = as.data.frame(all)
+    colnames(all) = "Date"
+    all = full_join(usgs_q, all)
+    plot(all$Date[order(all$Date)], all$q[order(all$Date)], type = "l", ylab = "Discharge (cms)", xlab = "Year")
+    title(paste("GRDC:", Site_number_xsections[i], ",", nodes[p]), line =0.25)
+    #points(Train$Date, Train$Q, col = "purple", pch = 19)
+    points(Valid$Date, (Valid$width*linear$coefficients[[2]])+linear$coefficients[[1]], col = "green")
+    
+    
+    
+    log_linear = lm(log(Valid$Q)~log(Valid$width))
+    power = (Valid$width^log_linear$coefficients[[2]])*(exp(log_linear$coefficients[[1]]))
+    #power = (Valid$width*exp(linear$coefficients[[1]]))^linear$coefficients[[2]]
+    points(Valid$Date, power, col = "yellow")
+    
+    
+    
+    names = c("rrmse", "nse", "kge", "nrmse", "rbias")
+    
+    ##Quantile validation 
+    Valid$model = ln
+    qVal = validation(Valid$model, Valid$Q)
+    qVal = as.data.frame(t(qVal))
+    colnames(qVal) = names
+    
+    Valid$pwr = power
+    pwrVal = validation(Valid$pwr, Valid$Q)
+    pwrVal = as.data.frame(t(pwrVal))
+    colnames(pwrVal) = names
+    
+    
+    rf = randomForest(Q ~width,data = Train, ntree= nrow(Train), mtry = 1)
+    out = predict(rf, Valid)
+    Valid$rf = out
+    rfVal = validation(Valid$rf, Valid$Q)
+    
+    rfVal = as.data.frame(t(rfVal))
+    colnames(rfVal) = names
+    
+    points(Valid$Date, Valid$rf, col = "blue")
+    
+    plsFit = try(train(Q ~width, 
+                       data = Train,
+                       method = "knn",
+                       preProc=c("center", "scale"),
+                       trControl = trainControl(method = "cv", number = c(5, 10, 20, 50, 100),search = "random")))
+    
+    preds <- predict(plsFit, newdata = Valid)
+    dlVal = validation(preds, Valid$Q)
+    dlVal = as.data.frame(t(dlVal))
+    colnames(dlVal) = names
+    
+    points(Valid$Date, preds, col = "red")
+    best = c(qVal$nse,pwrVal$nse, rfVal$nse, dlVal$nse)
+    max(best, na.rm = TRUE)
+    
+    input = which(best==max(best, na.rm = TRUE))
+    if(length(input) ==0){next}
+    comb = list(qVal,pwrVal, rfVal, dlVal)
+    out = as.data.frame(comb[input])
+    gage_stats$mode[i] = input
+    
+    rrmse = out$rrmse 
+    r = out$r
+    nse = out$nse
+    kge = out$kge
+    nrmse = out$nrmse
+    rbias = out$rbias
+    
+    bestFit = c("Linear","Pwr", "RF", "KNN")
+    legend1 = c(bestFit[input], paste0("NSE=",signif(nse, 3)),
+                paste0("KGE=",signif(kge, 3)),paste0("rBias=",signif(rbias, 3)),paste0("NRMSE=",signif(nrmse, 3)),paste0("RRMSE=",signif(rrmse, 3)))
+    legend("top", legend1, xpd = TRUE, bty = "n",  inset = c(0, -.3), horiz = TRUE, cex =0.75)
+    
+    Valid$dl = preds
+    comb = cbind(Valid$model,Valid$pwr, Valid$rf, preds)
+    comb = as.data.frame(comb)
+
+    comb$true = Valid$Q
+
+    error = comb[input] - comb$true
+    gage_stats$Site_number[i+(p-1)] = Site_number_xsections[i]
+    
+    gage_stats$RMSE[i+(p-1)] = sqrt(mean((error$V1^2), na.rm = TRUE))
+    gage_stats$Bias[i+(p-1)] = mean(error$V1, na.rm = TRUE)
+    gage_stats$RRMSE[i+(p-1)] = rrmse
+    gage_stats$NSE[i+(p-1)] = nse
+    gage_stats$KGE[i+(p-1)] = kge
+    gage_stats$NRMSE[i+(p-1)] = nrmse
+    gage_stats$rBias[i+(p-1)] = rbias
+    gage_stats$Site_number[i+(p-1)] = paired_df$ID[1]
+    gage_stats$n_Landsat_obs[i+(p-1)] = nrow(paired_df_1)
+    gage_stats$mode[i+(p-1)] = bestFit[input]
+    
+    print(i+(p-1))
+    
+    
+    plot(all$Date[order(all$Date)], all$q[order(all$Date)], type = "l", ylab = "Discharge (cms", xlab = "Year")
+    pd = left_join(pd, all[is.na(all$q),])
+    comb = cbind((pd$width*linear$coefficients[[2]])+linear$coefficients[[1]],(pd$width^log_linear$coefficients[[2]])*(exp(log_linear$coefficients[[1]])),predict(rf, pd), predict(plsFit, pd))
+    comb = as.data.frame(comb)
+    points(pd$Date, comb[,input], col = cols[input])
+    
+    legend2 = c("Training", "Linear", "Random Forest", "KNN")
+    legend("top", legend2,pch = c(19, 01,01,01), col = c("purple", cols), xpd = TRUE, bty = "n",  inset = c(0, -.3), horiz = TRUE, cex =.75)
+    }  
+  } else{next}
+}
+dev.off()
+cmd = paste('open', pdfOut)
+system(cmd)
+
+gage_file = foreign::read.dbf("E:/research/SWORD/shp/AllxSections3.dbf")
+gage_file = gage_file[gage_file$node_id%in%gage_stats$node_id,]
+gage_stats_vals = merge(gage_file, gage_stats,by = 'node_id')
+
+library(ggplot2)
+library(tmap)
+
+tmap_mode("view")
+
+tm_shape(gage_stats_vals)+
+  tm_bubbles(col = "NSE",size = 0.2, breaks = c(-1,-.5, 0,.5, 1))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -242,6 +524,9 @@ cols = c("green", "blue", "red")
 library(profvis)
 library(caret)
 library(dataRetrieval)
+
+pdfOut = "E:/research/temp_plots/GRDC_RC_hydrographs.pdf"
+pdf(pdfOut)
 #profvis({
 for(i in 1:length(Site_number_xsections)){
   id = Site_number_xsections[i]
@@ -353,7 +638,7 @@ for(i in 1:length(Site_number_xsections)){
     bestFit = c("QNT", "RF", "KNN")
     legend1 = c(bestFit[input], paste0("NSE=",signif(nse, 3)),
                 paste0("KGE=",signif(kge, 3)),paste0("rBias=",signif(rbias, 3)),paste0("NRMSE=",signif(nrmse, 3)),paste0("RRMSE=",signif(rrmse, 3)))
-    legend("top", legend1, xpd = TRUE, bty = "n",  inset = c(.1, -.1), horiz = TRUE)
+    legend("top", legend1, xpd = TRUE, bty = "n",  inset = c(0, -.3), horiz = TRUE, cex =0.75)
     
     Valid$dl = preds
     comb = cbind(Valid$model, Valid$rf, preds)
@@ -382,6 +667,7 @@ for(i in 1:length(Site_number_xsections)){
     comb = as.data.frame(comb)
     random_df = sapply(pd$calc_mean,random)
 
+    ##This is taking forever. 
     sdVals = as.vector(nrow(pd))
     for(j in 1:ncol(random_df)){
       dts = pd$Date[j]
@@ -402,11 +688,13 @@ for(i in 1:length(Site_number_xsections)){
            code=3, angle = 180, length = 0, lwd = 0.5)
     points(pd$Date, comb[,input], col = cols[input])
     legend2 = c("Training", "Quantile", "Random Forest", "KNN")
-    legend("top", legend2,pch = c(19, 01,01,01), col = c("purple", cols), xpd = TRUE, bty = "n",  inset = c(.1, -.1), horiz = TRUE)
+    legend("top", legend2,pch = c(19, 01,01,01), col = c("purple", cols), xpd = TRUE, bty = "n",  inset = c(0, -.3), horiz = TRUE, cex =.75)
     
   } else{next}
 }
-
+dev.off()
+cmd = paste('open', pdfOut)
+system(cmd)
 biasE = apply(sd_vals, 1, mean, na.rm = TRUE)
 rm = function(x){
   rmse = sqrt(mean(na.omit(x)^2))
