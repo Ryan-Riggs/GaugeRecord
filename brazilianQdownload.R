@@ -7,6 +7,8 @@ gsim_br$gage = gsim_all$reference.no[match(gsim_br$Station_Num, gsim_all$gsim.no
 stations = gsim_br$gage
 
 link = "https://www.snirh.gov.br/hidroweb/rest/api/documento/convencionais?tipo=3&documentos="#13580000,10800000,10700000,10600000,10200000,10100000,10300000,10500000
+stations = brazil$CODIGO
+
   
 go = c(link, unlist(stations))
 
@@ -25,10 +27,10 @@ is.error <- function(
   # output:
   iserror
 }
-outpath2 = "E:\\research\\RatingCurveAnalysis\\GaugeLocations\\DischargeDatasets\\Brazil\\zips2\\"
-outpath = "E:\\research\\RatingCurveAnalysis\\GaugeLocations\\DischargeDatasets\\Brazil\\zips\\"
-outpath_csv = "E:\\research\\RatingCurveAnalysis\\GaugeLocations\\DischargeDatasets\\Brazil\\"
-for(i in 1:length(stations)){
+outpath2 = "E:\\research\\GlobalGaugeData\\Brazil\\zips2\\"
+outpath = "E:\\research\\GlobalGaugeData\\Brazil\\zips\\"
+outpath_csv = "E:\\research\\GlobalGaugeData\\Brazil\\"
+for(i in 1544:length(stations)){
   print(i)
   files = paste0(link, stations[i])
   out = paste0(outpath, stations[i], ".zip")
@@ -52,7 +54,6 @@ for(i in 1:length(stations)){
     dt = data1[start:end]
     dt = gsub(",", ".", dt)
     df[j,1:length(cols)] = dt
-    print(j)
   }
   fwrite(df,paste0(outpath_csv,  sub(",","",stations[i]), ".csv"))
 }

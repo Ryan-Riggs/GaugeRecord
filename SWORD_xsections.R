@@ -23,6 +23,7 @@ shp = shp[grep(tolower(folds[i]), shp)]
 for(j in 1:length(shp)){
 nodes = st_read(paste0(wd, folds[i], "\\", shp[j]))
 noi = nodes
+noi = st_intersects(gsim_buffer,shp)
 noi_pts = as_Spatial(noi)
 b = bearing(noi_pts)
 b[which(is.na(b))] = 90
@@ -86,7 +87,7 @@ my.lines$reach_id = noi_pts$reach_id
 my.lines$node_id = noi_pts$node_id
 my.lines$width = noi_pts$width
 my.lines$lakeflag = noi_pts$lakeflag
-outFile = paste0("E:\\research\\SWORD\\3xSections\\",gsub(".shp","",shp[j]))
+outFile = paste0("E:\\research\\SWORD\\3xSections_GSIM2km\\",gsub(".shp","",shp[j]))
 writeSpatialShape(my.lines,outFile)
 rm(dd)
 rm(my.lines)

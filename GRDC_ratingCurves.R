@@ -172,13 +172,42 @@ tm_shape(grdc)+
 ########################################################################################################################
 ##GRDC cross sections. 
 ########################################################################################################################
+##Consider filtering out cross sections that don't have record from 1984 onward. 
+grdc = list.files("E:\\research\\RatingCurveAnalysis\\GaugeLocations\\DischargeDatasets\\GRDC\\", full.names = TRUE)
+allDates = as.data.frame(seq.Date(as.Date("1984-01-01"), as.Date("2020-12-31"), by = "day"))
+colnames(allDates) = "Date"
+missing = as.vector(length(grdc))
+for(i in 1:length(grdc)){
+  print(i)
+  usgs_q = try(read.table(grdc[i], stringsAsFactors = FALSE))
+  usgs_q$V1 = substr(usgs_q$V1, 0, 10)
+  usgs_q$datetime = usgs_q$V1
+  usgs_q$Date = as.Date(usgs_q$datetime, format = "%Y-%m-%d")
+  usgs_q$V2 = as.numeric(usgs_q$V2)
+  usgs_q = usgs_q[usgs_q$V2>=0,]
+  all = inner_join(allDates, usgs_q)
+  missing[i] = nrow(all)
+}
+
+grdc = list.files("E:\\research\\RatingCurveAnalysis\\GaugeLocations\\DischargeDatasets\\GRDC\\")
+records = grdc[missing>0]
+record = gsub("_Q_Day.Cmd.txt", "_grdc", records)
+#fwrite(as.data.frame(record),"C:\\Users\\rriggs\\Downloads\\grdc.csv")
+
+
+
 grdc_path = "E:\\research\\RatingCurveAnalysis\\GaugeLocations\\DischargeDatasets\\GRDC\\"
-gages = list.files("E:/research/RatingCurveAnalysis/obs/SWORD/Xsections_2km/GRDC_xsection_widths/")
+gages = list.files("E:/research/RatingCurveAnalysis/obs/SWORD/Xsections_2km/GRDC_xsection_widths/GRDC_xsection_widths")
 gages = gsub("Gauge__", "", gages)
 Site_number_xsections = gsub("_grdc.csv", "", gages)
 grdc_files = paste0(Site_number_xsections, "_Q_Day.Cmd.txt")
 grdc_files = paste0(grdc_path, grdc_files)
-xsection_files = paste0("E:/research/RatingCurveAnalysis/obs/SWORD/Xsections_2km/GRDC_xsection_widths/", "Gauge__", Site_number_xsections, "_grdc.csv")
+xsection_files = paste0("E:/research/RatingCurveAnalysis/obs/SWORD/Xsections_2km/GRDC_xsection_widths/GRDC_xsection_widths/", "Gauge__", Site_number_xsections, "_grdc.csv")
+
+
+
+
+
 
 
 
@@ -186,6 +215,11 @@ random = function(x){
   x = na.omit(x)
   v = runif(1000, x-90, x+90)
   return(v)
+}
+
+fk = function(x, y){
+  y = 0
+  return(as.data.frame(cbind(x, y)))
 }
 
 
@@ -249,7 +283,7 @@ pdf(pdfOut)
 gage_stats = as.data.frame(matrix(numeric(), nrow =50000, ncol = 24))
 colnames(gage_stats)= c("Site_number", "GRWL_width_m","n_Landsat_obs","R_2", "R", "RMSE", "mode","Bias", "RRMSE","avg_std", "change", "std_Q","STDE", "KGE", "NSE", "rBias",
                         "SDRR", "MRR", "NRMSE", "Q_50", "W_50", "node_id",".geo")
-cols = c("green","yellow", "blue", "red")
+cols = c("green","yellow", "blue", "red", "black", "brown")
 n = 0
 
 #profvis({
@@ -294,7 +328,7 @@ for(i in 1:length(Site_number_xsections)){
     Valid = paired_df_1[-trainIndex,]
     
     
-    if(nrow(Valid)<3|nrow(Train)<3){next}
+    if(nrow(Valid)<3|length(unique(Train$width))<4){next}
     
     linear = lm(Train$Q~Train$width)
     ln = (Valid$width*linear$coefficients[[2]])+linear$coefficients[[1]]
@@ -356,12 +390,49 @@ for(i in 1:length(Site_number_xsections)){
     colnames(dlVal) = names
     
     points(Valid$Date, preds, col = "red")
-    best = c(qVal$nse,pwrVal$nse, rfVal$nse, dlVal$nse)
+    
+    spline_test = try(smooth.spline(Train$width, Train$Q, spar = 0.9))
+    if(is.error(spline_test)){
+      spl_preds = fk(Valid$width, Valid$Q)
+      splVal = validation(spl_preds$y, Valid$Q)
+      splVal = as.data.frame(t(splVal))
+      colnames(splVal) = names
+      points(Valid$Date, spl_preds$y, col = "black")
+      
+    }else{
+    spl_preds = predict(spline_test, Valid$width)
+    splVal = validation(spl_preds$y, Valid$Q)
+    splVal = as.data.frame(t(splVal))
+    colnames(splVal) = names
+    points(Valid$Date, spl_preds$y, col = "black")
+    }
+    
+    
+    segmented.mod = try(segmented(lm(Q~width, Train), seg.Z = ~width))
+    
+    if(is.error(segmented.mod)){
+      seg_preds = fk(Valid$width, Valid$Q)
+      segVal = validation(seg_preds$y, Valid$Q)
+      segVal = as.data.frame(t(segVal))
+      colnames(segVal) = names
+      points(Valid$Date, seg_preds$y, col = "black")
+      
+    }else{
+      seg_preds = predict(segmented.mod, Valid)
+      segVal = validation(seg_preds, Valid$Q)
+      segVal = as.data.frame(t(segVal))
+      colnames(segVal) = names
+      points(Valid$Date, seg_preds, col = "brown")
+    }
+    
+    
+    best = c(qVal$nse,pwrVal$nse, rfVal$nse, dlVal$nse, splVal$nse, segVal$nse)
     max(best, na.rm = TRUE)
+    print(best)
     
     input = which(best==max(best, na.rm = TRUE))
     if(length(input) ==0){next}
-    comb = list(qVal,pwrVal, rfVal, dlVal)
+    comb = list(qVal,pwrVal, rfVal, dlVal, splVal, segVal)
     out = as.data.frame(comb[input])
     #gage_stats$mode[i] = input
     
@@ -372,13 +443,13 @@ for(i in 1:length(Site_number_xsections)){
     nrmse = out$nrmse
     rbias = out$rbias
     
-    bestFit = c("Linear","Pwr", "RF", "KNN")
+    bestFit = c("Linear","Pwr", "RF", "KNN", "Spl", "Pcw")
     legend1 = c(bestFit[input], paste0("NSE=",signif(nse, 3)),
                 paste0("KGE=",signif(kge, 3)),paste0("rBias=",signif(rbias, 3)),paste0("NRMSE=",signif(nrmse, 3)),paste0("RRMSE=",signif(rrmse, 3)))
     legend("top", legend1, xpd = TRUE, bty = "n",  inset = c(0, -.3), horiz = TRUE, cex =0.75)
     
     Valid$dl = preds
-    comb = cbind(Valid$model,Valid$pwr, Valid$rf, preds)
+    comb = cbind(Valid$model,Valid$pwr, Valid$rf, preds, spl_preds$y, seg_preds)
     comb = as.data.frame(comb)
 
     comb$true = Valid$Q
@@ -402,12 +473,23 @@ for(i in 1:length(Site_number_xsections)){
     
     plot(all$Date[order(all$Date)], all$q[order(all$Date)], type = "l", ylab = "Discharge (cms", xlab = "Year")
     pd = left_join(pd, all[is.na(all$q),])
-    comb = cbind((pd$width*linear$coefficients[[2]])+linear$coefficients[[1]],(pd$width^log_linear$coefficients[[2]])*(exp(log_linear$coefficients[[1]])),predict(rf, pd), predict(plsFit, pd))
+    
+    pd_spl = try(predict(spline_test, pd$width)$y)
+    if(is.error(pd_spl)){
+      pd_spl = rep(0, nrow(pd))
+    }
+    pd_pcw = try(predict(segmented.mod, pd))
+    if(is.error(pd_pcw)){
+      pd_pcw = rep(0, nrow(pd))
+    }
+    
+    
+    comb = cbind((pd$width*linear$coefficients[[2]])+linear$coefficients[[1]],(pd$width^log_linear$coefficients[[2]])*(exp(log_linear$coefficients[[1]])),predict(rf, pd), predict(plsFit, pd), pd_spl, pd_pcw)
     comb = as.data.frame(comb)
     try(points(pd$Date, comb[,input], col = cols[input]))
     
-    legend2 = c("Linear","Power", "Random Forest", "KNN")
-    legend("top", legend2,pch = c(01, 01,01,01), col = c(cols), xpd = TRUE, bty = "n",  inset = c(0, -.3), horiz = TRUE, cex =.75)
+    legend2 = c("Linear","Power", "Random Forest", "KNN", "Spl")
+    legend("top", legend2,pch = c(01, 01,01,01,01), col = c(cols), xpd = TRUE, bty = "n",  inset = c(0, -.3), horiz = TRUE, cex =.75)
     }  
   } else{next}
 }
@@ -416,7 +498,15 @@ cmd = paste('open', pdfOut)
 system(cmd)
 
 original = gage_stats
-fwrite(gage_stats, "E:/research/RatingCurveAnalysis/obs/lookup.csv")
+original = as.data.frame(gage_stats)
+#lookup1 = as.data.frame(lookup1)
+#lookup1$node_id = as.numeric(lookup1$node_id)
+original$node_id = as.numeric(original$node_id)
+
+
+
+#lookup1 = bind_rows(lookup1, original)
+fwrite(original, "E:/research/RatingCurveAnalysis/obs/lookupFull.csv")
 ########################################################################################################
 ##Producing gaps in the data, does it improve to make rc based on widths near gap or across time series.
 ########################################################################################################
@@ -522,6 +612,11 @@ for(i in 1:length(Site_number_xsections)){
                            trControl = trainControl(method = "cv", number = c(5, 10, 20, 50, 100),search = "random")))
         out <- predict(plsFit, newdata = Valid)
       }
+      if(algorithm=="Spl"){
+        spline_test = try(smooth.spline(Train$width, Train$Q))
+          spl_preds = predict(spline_test, Valid$width)
+          out = spl_preds$y
+      }
       Valid$model = out
       outlist[[r]] = Valid
       break
@@ -550,42 +645,26 @@ for(i in 1:length(Site_number_xsections)){
   } else{next}
 }
 })
-ryan = merge(lookup[!is.na(lookup$Site_number),],gage_stats[!is.na(gage_stats$Site_number),],by =c("Site_number", "node_id"))
-ryan$diff = ryan$NSE.y-ryan$NSE.x
-plot(ryan$NSE.x, ryan$NSE.y, xlim =c(-1,1), ylim = c(-1,1), xlab = "1 curve", ylab = "multi-curve")
-abline(0,1)
 
-ryan = as.data.table(ryan)
-ryanX = ryan[ryan[,.I[which.max(NSE.x)], by=Site_number]$V1]
-ryanY = ryan[ryan[,.I[which.max(NSE.y)], by=Site_number]$V1]
-
-
-
-
-gages = merge(ryanX, ryanY, by = c("Site_number"))
-plot(gages$NSE.x.x, gages$NSE.y.y, xlim = c(-1,1), ylim = c(-1,1), col = gages$mode.x.x)
-abline(0,1)
-
-diff = gages$NSE.y.y - gages$NSE.x.x
-length(diff[diff>0])
-
-
-
-
-
-
-ggplot(data = gages, aes(x = NSE.x.x, y = NSE.y.y))+geom_point(aes(colour = mode.x.x))
 ################################################################################################
 ##At what point does recurrence interval effect performance?
 ################################################################################################
-gage_stats = as.data.frame(matrix(numeric(), nrow =500000, ncol = 24))
+lookup = fread("E:/research/RatingCurveAnalysis/obs/lookupFull.csv")
+lookup = lookup%>%select(Site_number, node_id, mode, NSE)
+lookup = lookup[!is.na(lookup$NSE),]
+lookup = as.data.table(lookup)
+keys = c("Site_number", "node_id")
+setkeyv(lookup, keys)
+
+numb = length(unique(lookup$node_id))*20
+gage_stats = as.data.frame(matrix(numeric(), nrow =2000000, ncol = 24))
 colnames(gage_stats)= c("Site_number", "GRWL_width_m","n_Landsat_obs","R_2", "R", "RMSE", "mode","Bias", "RRMSE","avg_std", "change", "std_Q","STDE", "KGE", "NSE", "rBias",
                         "SDRR", "recurrence", "NRMSE", "Q_50", "W_50", "node_id",".geo")
-cols = c("green","yellow", "blue", "red")
+cols = c("green","yellow", "blue", "red", "black")
 n = 0
 '%!in%' <- function(x,y)!('%in%'(x,y))
 recurrence = c(2:20)
-for(i in 1:length(Site_number_xsections)){
+for(i in 1449:length(Site_number_xsections)){
     #for(i in 1:17){
     paired_df = fread(xsection_files[i])
     paired_df = paired_df[paired_df$width>0&paired_df$cloud<.1&paired_df$count==2&paired_df$max==0,]
@@ -640,44 +719,58 @@ for(i in 1:length(Site_number_xsections)){
             #algorithm = lookup[lookup$Site_number==Site_number_xsections[i]&lookup$node_id==nodes[p],]
             #algorithm = na.omit(algorithm)
             #algorithm = algorithm$mode
-            algorithm = lookup[.(Site_number_xsections[i], as.numeric(nodes[p]))]
+
+            algorithm = lookup[.(as.integer(Site_number_xsections[i]), nodes[p])]
             algorithm = na.omit(algorithm$mode)
-            
+            nm = paste0(algorithm, "Fun")
+
             if(nrow(paired_df_1)<3|length(algorithm)==0){next}
             set.seed(1)
-            trainIndex = createDataPartition(paired_df_1$Q, p = training,
-                                             list = FALSE)
+            trainIndex = try(createDataPartition(paired_df_1$Q, p = training,
+                                             list = FALSE))
+            if(is.error(trainIndex)){next}
             
             Train = paired_df_1[ trainIndex,]
             Valid = paired_df_1[-trainIndex,]
             
-            if(nrow(Valid)<3|nrow(Train)<3){next}
+            if(nrow(Valid)<3|length(unique(Train$width))<4){next}
             
-            if(algorithm=="Linear"){
-              linear = lm(Train$Q~Train$width)
-              out = (Valid$width*linear$coefficients[[2]])+linear$coefficients[[1]]
-              
-            }
-            if(algorithm=="Pwr"){
-              log_linear = lm(log(Train$Q)~log(Train$width))
-              out = (Valid$width^log_linear$coefficients[[2]])*(exp(log_linear$coefficients[[1]]))
-              
-            }
-            if(algorithm=="RF"){
-              rf = randomForest(Q ~width,data = Train, ntree= nrow(Train), mtry = 1)
-              out = predict(rf, Valid)
-            }
-            if(algorithm=="KNN"){
-              plsFit = try(train(Q ~width, 
-                                 data = Train,
-                                 method = "knn",
-                                 preProc=c("center", "scale"),
-                                 trControl = trainControl(method = "cv", number = c(5, 10, 20, 50, 100),search = "random")))
-              out <- predict(plsFit, newdata = Valid)
-            }
+            
+            out = do.call(nm, list(Train, Valid))
+            # if(algorithm=="Linear"){
+            #   linear = lm(Train$Q~Train$width)
+            #   out = (Valid$width*linear$coefficients[[2]])+linear$coefficients[[1]]
+            # 
+            # }
+            # if(algorithm=="Pwr"){
+            #   log_linear = lm(log(Train$Q)~log(Train$width))
+            #   out = (Valid$width^log_linear$coefficients[[2]])*(exp(log_linear$coefficients[[1]]))
+            # 
+            # }
+            # if(algorithm=="RF"){
+            #   rf = randomForest(Q ~width,data = Train, ntree= nrow(Train), mtry = 1)
+            #   out = predict(rf, Valid)
+            # }
+            # if(algorithm=="KNN"){
+            #   plsFit = try(train(Q ~width,
+            #                      data = Train,
+            #                      method = "knn",
+            #                      preProc=c("center", "scale"),
+            #                      trControl = trainControl(method = "cv", number = c(5, 10, 20, 50, 100),search = "random")))
+            #   out <- predict(plsFit, newdata = Valid)
+            # }
+            # if(algorithm=="Spl"){
+            #   spline_test = try(smooth.spline(Train$width, Train$Q, spar = 0.9))
+            #   if(is.error(spline_test)){
+            #   out = rep(0, nrow(Valid))
+            #   }else{
+            #   spl_preds = predict(spline_test, Valid$width)
+            #   out = spl_preds$y
+            #   }
+            # }
             Valid$model = out
             outlist[[r]] = Valid
-          }
+            }
           if(nrow(rbindlist(outlist))<1){next}
           
           model = rbindlist(outlist)
@@ -686,7 +779,6 @@ for(i in 1:length(Site_number_xsections)){
           names = c("rrmse", "nse", "kge", "nrmse", "rbias")
           colnames(performance) = names
           error = model$model-model$q
-          #gage_stats$Site_number[i+(p-1)] = Site_number_xsections[i]
           gage_stats$RMSE[n] = sqrt(mean((error^2), na.rm = TRUE))
           gage_stats$Bias[n] = mean(error, na.rm = TRUE)
           gage_stats$RRMSE[n] = performance$rrmse
@@ -694,61 +786,174 @@ for(i in 1:length(Site_number_xsections)){
           gage_stats$KGE[n] = performance$kge
           gage_stats$NRMSE[n] = performance$nrmse
           gage_stats$rBias[n] = performance$rbias
-          #gage_stats$Site_number[i+(p-1)] = paired_df$ID[1]
           gage_stats$n_Landsat_obs[n] = nrow(paired_df_1)
           gage_stats$mode[n] = algorithm
           gage_stats$recurrence[n] = recurrence[y]
-          print(n)
+          print(i)
         }
         }
       }
     } else{next}
   }
-
-ryan = merge(lookup[!is.na(lookup$NSE),],gage_stats[!is.na(gage_stats$NSE),],by =c("Site_number", "node_id"))
-ryan$diff = ryan$NSE.y-ryan$NSE.x
-plot(ryan$diff, ylim = c(-1,1))
-plot(ryan$NSE.x, ryan$NSE.y, xlim =c(-1,1), ylim = c(-1,1), xlab = "1 curve", ylab = "multi-curve")
-abline(0,1)
-
-##Filter to highest performing recurrence interval for each site number and node. 
-ryan = as.data.table(ryan)
-ryanY = ryan[ryan[,.I[which.max(NSE.y)], by=list(Site_number, node_id)]$V1]
-median(ryanY$diff)
-
-##Filter to highest performing recurrence interval for each gauge only. 
-gage_highestPerformanceSingle = ryan[ryan[,.I[which.max(NSE.x)], by=Site_number]$V1]
-gage_highestPerformanceSingle$single = gage_highestPerformanceSingle$NSE.x
-
-gage_highestPerformanceMulti =  ryan[ryan[,.I[which.max(NSE.y)], by=Site_number]$V1]
-gage_highestPerformanceMulti$multi = gage_highestPerformanceMulti$NSE.y
-
-gage_combined = merge(gage_highestPerformanceSingle, gage_highestPerformanceMulti, by = "Site_number")
-gage_combined$diff = gage_combined$multi-gage_combined$single
-plot(gage_combined$single, gage_combined$multi, xlim = c(-1,1), ylim = c(-1,1))
-abline(0,1)
-nrow(gage_combined[gage_combined$diff>0,])/nrow(gage_combined)
-nrow(gage_combined[gage_combined$mode.x.x=="Pwr"|gage_combined$mode.x.x=="Linear",])/nrow(gage_combined)
-
-traditional = gage_combined[gage_combined$mode.x.x=="Pwr"|gage_combined$mode.x.x=="Linear",]
-ml = gage_combined[gage_combined$mode.x.x=="KNN"|gage_combined$mode.x.x=="RF",]
-
-trad1 = gage_combined[gage_combined$mode.y.y=="Pwr"|gage_combined$mode.y.y=="Linear",]
-ml1 = gage_combined[gage_combined$mode.y.y=="KNN"|gage_combined$mode.y.y=="RF",]
-
-##Assign true highest values and if it needs to be evolved or not. 
-gage_combined$NSE = ifelse(gage_combined$diff>0, gage_combined$multi, gage_combined$single)
-gage_combined$recurrence = ifelse(gage_combined$diff>0, gage_combined$recurrence.y, 0)
-gage_combined$mode = ifelse(gage_combined$diff>0, gage_combined$mode.y.y, gage_combined$mode.x.x)
-
-
-plot(gage_combined$recurrence, gage_combined$NSE)
-median(gage_combined$NSE)
+fwrite(gage_stats, "E:/research/RatingCurveAnalysis/obs/recurrence_Full_pt2.csv")
+lookup$Site_number = as.character(lookup$Site_number)
+lookup$node_id = as.numeric(lookup$node_id)
 
 
 
+##Save the node_id!!!!!
+#st_write(gage_stats_vals%>%select(Site_number, NSE, mode, recurrence), "E:\\research\\RatingCurveAnalysis\\obs\\example_wSpl.shp")
 
-df = gage_combined[!is.na(gage_combined$NSE),]
+######How much of the gauge record is being filled in. 
+grdc_path = "E:\\research\\RatingCurveAnalysis\\GaugeLocations\\DischargeDatasets\\GRDC\\"
+gages = list.files("E:/research/RatingCurveAnalysis/obs/SWORD/Xsections_2km/GRDC_xsection_widths/")
+gages = gsub("Gauge__", "", gages)
+Site_number_xsections = gsub("_grdc.csv", "", gages)
+Site_number_xsections = Site_number_xsections[Site_number_xsections%in%multiple$Site_number]
+grdc_files = paste0(Site_number_xsections, "_Q_Day.Cmd.txt")
+grdc_files = paste0(grdc_path, grdc_files)
+xsection_files = paste0("E:/research/RatingCurveAnalysis/obs/SWORD/Xsections_2km/GRDC_xsection_widths/", "Gauge__", Site_number_xsections, "_grdc.csv")
+
+
+totalRecord = as.vector(length(Site_number_xsections))
+filledIn = as.vector(length(Site_number_xsections))
+allDates = as.data.frame(seq.Date(as.Date("1984-01-01"), as.Date("2021-12-31"), by = "day"))
+colnames(allDates) = "Date"
+for(i in 1:length(Site_number_xsections)){
+  print(i)
+  #for(i in 1:17){
+  paired_df = fread(xsection_files[i])
+  paired_df = paired_df[paired_df$width>0&paired_df$cloud<.1&paired_df$count==2&paired_df$max==0,]
+  paired_df$Date = as.Date(as.POSIXct(paired_df$`system:time_start`/1000, origin = "1970-01-01"))
+  paired_df$width = paired_df$width*paired_df$length
+  nodes = unique(paired_df$node_id)
+  paired_df = as.data.table(paired_df)
+  setkey(paired_df, node_id)
+  pd1 = paired_df
+  usgs_q = try(read.table(grdc_files[i], stringsAsFactors = FALSE))
+  GageLookup = gage_combined[gage_combined$Site_number==Site_number_xsections[i]]
+  if(GageLookup$diff<0){
+    nd = GageLookup$node_id.x
+  }else{
+    nd = GageLookup$node_id.y
+  }
+  pd = paired_df[paired_df$node_id==nd]
+  usgs_q$V1 = substr(usgs_q$V1, 0, 10)
+  usgs_q$datetime = usgs_q$V1
+  usgs_q$q = as.numeric(usgs_q$V2)
+  usgs_q$Date = as.Date(usgs_q$datetime, format = "%Y-%m-%d")
+  usgs_q = usgs_q[usgs_q$q>0&usgs_q$Date>as.Date("1983-12-31", format ="%Y-%m-%d"),]
+  dts = left_join(allDates, usgs_q)
+  plot(dts$Date, dts$q, type = "l")
+  jn = inner_join(dts, pd)
+  wd = jn[!is.na(jn$width)&is.na(jn$q),]
+  points(wd$Date, rep(mean(usgs_q$q, na.rm = TRUE), nrow(wd)), col = "red")
+  totalRecord[i] = nrow(dts[!is.na(dts$q),])
+  filledIn[i] = length(unique(wd$Date))
+}
+
+##What percentage increase in from Machine learning in the single long-term curve approach. 
+nseOut = as.vector(length(Site_number_xsections))
+mlOut = as.vector(length(Site_number_xsections))
+trOut = as.vector(length(Site_number_xsections))
+for(i in 1:length(Site_number_xsections)){
+  print(i)
+  #for(i in 1:17){
+  paired_df = fread(xsection_files[i])
+  paired_df = paired_df[paired_df$width>0&paired_df$cloud<.1&paired_df$count==2&paired_df$max==0,]
+  paired_df$Date = as.Date(as.POSIXct(paired_df$`system:time_start`/1000, origin = "1970-01-01"))
+  paired_df$width = paired_df$width*paired_df$length
+  nodes = unique(paired_df$node_id)
+  paired_df = as.data.table(paired_df)
+  setkey(paired_df, node_id)
+  pd1 = paired_df
+  usgs_q = try(read.table(grdc_files[i], stringsAsFactors = FALSE))
+  #GageLookup = gage_combined[gage_combined$Site_number==Site_number_xsections[i]]
+  #nd = GageLookup$node_id.x
+  #nse = GageLookup$NSE.x.x
+  
+  GageLookup = single[single$Site_number==Site_number_xsections[i]]
+  nd = GageLookup$node_id
+  nse = GageLookup$NSE
+  pd = paired_df[paired_df$node_id==nd]
+  usgs_q$V1 = substr(usgs_q$V1, 0, 10)
+  usgs_q$datetime = usgs_q$V1
+  usgs_q$q = as.numeric(usgs_q$V2)
+  usgs_q$Q = usgs_q$q
+  usgs_q$Date = as.Date(usgs_q$datetime, format = "%Y-%m-%d")
+  usgs_q = usgs_q[usgs_q$q>0&usgs_q$Date>as.Date("1983-12-31", format ="%Y-%m-%d"),]
+  df = inner_join(pd, usgs_q)
+  set.seed(1)
+  trainIndex = createDataPartition(df$Q, p = 0.7,
+                                   list = FALSE)
+  Train = df[ trainIndex,]
+  Valid = df[-trainIndex,]
+  nse = GageLookup$single
+  linear = lm(Train$Q~Train$width)
+  outLinear = (Valid$width*linear$coefficients[[2]])+linear$coefficients[[1]]
+  performanceLinear = NSE(outLinear, Valid$Q)
+  log_linear = lm(log(Train$Q)~log(Train$width))
+  outPower = (Valid$width^log_linear$coefficients[[2]])*(exp(log_linear$coefficients[[1]]))
+  performancePower = NSE(outPower, Valid$Q)
+  spline_test = try(smooth.spline(Train$width, Train$Q))
+  widthVals = min(df$width, na.rm=TRUE):max(df$width, na.rm = TRUE)
+  widthVals = as.data.frame(widthVals)
+  colnames(widthVals) = "width"
+  if(is.error(spline_test)){
+    outSpline = rep(0, nrow(Valid))
+    plot(widthVals$width, rep(0, nrow(widthVals)), type = "l")
+  }else{
+  spl_preds = predict(spline_test, Valid$width)
+  outSpline = spl_preds$y
+  #plot(widthVals$width, unlist(predict(spline_test, widthVals)$y), type = "l")
+  }
+  performanceSpline = NSE(outSpline, Valid$Q)
+  rf = randomForest(Q ~width,data = Train, ntree= nrow(Train), mtry = 1)
+  outRF = predict(rf, Valid)
+  q = predict(rf, widthVals)
+  #lines(widthVals$width, q,col = "green")
+  performanceRF = NSE(outRF, Valid$Q)
+  plsFit = try(train(Q ~width, 
+                     data = Train,
+                     method = "knn",
+                     preProc=c("center", "scale"),
+                     trControl = trainControl(method = "cv", number = c(5, 10, 20, 50, 100),search = "random")))
+  outKnn <- predict(plsFit, newdata = Valid)
+  #lines(widthVals$width, predict(plsFit, widthVals), col="red")
+  performanceKnn = NSE(outKnn, Valid$Q)
+  ml = max(c(performanceKnn, performanceRF))
+  tr = max(c(performanceLinear, performancePower, performanceSpline))
+  
+  nseOut[i] = max(ml, tr)
+  mlOut[i] = ml
+  trOut[i] = tr
+}
+
+nsediff = mlOut - trOut
+percent = diff/(abs(trOut))
+
+
+
+
+
+
+single = fread("E:/research/RatingCurveAnalysis/obs/lookup.csv")
+single = single[single[,.I[which.max(NSE)], by = list(Site_number)]$V1]
+multiple = fread("E:/research/RatingCurveAnalysis/obs/recurrence_wSpline.csv")
+multiple = multiple[multiple[,.I[which.max(NSE)], by = list(Site_number)]$V1]
+
+single$single = single$NSE
+multiple$multiple = multiple$NSE
+
+comb = merge(single, multiple, by = "Site_number")
+comb$diff = comb$multiple-comb$single
+
+nrow(comb[comb$mode.x=="Pwr"|comb$mode.x=="Linear"|comb$mode.x=="Spl",])
+comb$NSE = ifelse(comb$diff>0, comb$multiple, comb$single)
+comb$recurrence = ifelse(comb$diff>0, comb$recurrence, 0)
+comb$mode = ifelse(comb$diff>0, comb$mode.y, comb$mode.x)
+
+df = comb
 gage_file = st_read("E:\\research\\RatingCurveAnalysis\\GaugeLocations\\30_m_1984\\combined_andIndia.shp")
 gage_file = gage_file[gage_file$Sttn_Nm%in%paste0(df$Site_number, "_grdc"),]
 df$Sttn_Nm = paste0(df$Site_number, "_grdc")
@@ -766,7 +971,15 @@ tm_shape(gage_stats_vals)+
   tm_bubbles(col = "recurrence",size = 0.2, breaks = c(0,1,2,5,10,20))
 
 tm_shape(gage_stats_vals)+
-  tm_bubbles(col = "mode",size = 0.2)
+  tm_bubbles(col = "mode",size = 0.2, breaks = c("KNN", "RF", "Linear", "Pwr", "Spl"))
+
+tm_shape(gage_stats_vals)+
+  tm_bubbles(col = "diff",size = 0.2)
+
+
+##Save the node_id!!!!!
+st_write(gage_stats_vals%>%select(Site_number,diff,mode, NSE, recurrence), "E:\\research\\RatingCurveAnalysis\\obs\\example_wSpl_updated.shp")
+
 
 
 
@@ -797,7 +1010,7 @@ library(tmap)
 tmap_mode("view")
 
 tm_shape(gage_stats_vals)+
-  tm_bubbles(col = "NSE",size = 0.2, breaks = c(-1,0,.25,.5,.75, 1))
+  tm_bubbles(col = "NSE",size = 0.2, breaks = c(-1,0,seq(.1,1,.1)))
 
 tm_shape(gage_stats_vals)+
   tm_bubbles(col = "mode",size = 0.2)
@@ -809,7 +1022,29 @@ tm_shape(gage_stats_vals)+
 
 
 
+group = gage_stats[gage_stats[,.I[which.min(RRMSE)], by=Site_number]$V1]
+gage_file = st_read("E:\\research\\RatingCurveAnalysis\\GaugeLocations\\30_m_1984\\combined_andIndia.shp")
+gage_file = gage_file[gage_file$Sttn_Nm%in%paste0(group$Site_number, "_grdc"),]
+group$Sttn_Nm = paste0(group$Site_number, "_grdc")
+gage_stats_vals = merge(gage_file, group,by = 'Sttn_Nm')
+tm_shape(gage_stats_vals)+
+  tm_bubbles(col = "RRMSE",size = 0.2, breaks = c(0,35,50,75,100,1000))
+plot(gage_stats_vals$RRMSE, ylim = c(0,500))
+abline(h = 35)
 
+nse = gage_stats_vals
+nse$mode = as.factor(nse$mode)
+nse$modeNum = as.numeric(nse$mode)
+
+
+
+st_write(gage_stats_vals, "C:\\Users\\rriggs\\Downloads\\nse.shp")
+
+
+
+rrmse = gage_stats_vals
+rrmse$mode = as.factor(rrmse$mode)
+rrmse$modeNum = as.numeric(rrmse$mode)
 
 
 ###############################################################################
